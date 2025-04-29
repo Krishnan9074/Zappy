@@ -1,36 +1,104 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ZappForm
+
+ZappForm is an AI-powered form autofill solution that automatically fills any web form with your information, saving valuable time and eliminating repetitive data entry.
+
+## Features
+
+- **AI Persona Generation**: Creates a comprehensive profile by aggregating all your data
+- **Intelligent Form Recognition**: Automatically detects forms on web pages
+- **Document Processing**: Extracts information from uploaded documents
+- **Secure User Data Management**: Encryption for sensitive information
+- **Browser Extension**: One-click form filling on any website
+
+## Tech Stack
+
+- **Frontend**: Next.js 14, React 18, Tailwind CSS, TypeScript
+- **Backend**: Next.js API Routes, Prisma ORM with PostgreSQL
+- **AI**: Google Generative AI
+- **Vector DB**: Pinecone for embeddings and semantic search
+- **Authentication**: NextAuth.js with multiple providers
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- Node.js 18+ and npm
+- PostgreSQL database
+- Google Generative AI API key
+- Pinecone account
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Installation
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Clone the repository:
+   ```
+   git clone https://github.com/yourusername/zappform.git
+   cd zappform
+   ```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+2. Install dependencies:
+   ```
+   npm install
+   ```
 
-## Learn More
+3. Create a `.env` file in the root directory with the following variables:
+   ```
+   # Database Connection
+   DATABASE_URL="postgresql://username:password@localhost:5432/zappform"
 
-To learn more about Next.js, take a look at the following resources:
+   # NextAuth Configuration
+   NEXTAUTH_URL="http://localhost:3000"
+   NEXTAUTH_SECRET="your-nextauth-secret-here"
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+   # Google OAuth (for authentication)
+   GOOGLE_CLIENT_ID="your-google-client-id"
+   GOOGLE_CLIENT_SECRET="your-google-client-secret"
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+   # Google Generative AI
+   GOOGLE_AI_API_KEY="your-google-ai-api-key"
 
-## Deploy on Vercel
+   # Pinecone (Vector Database)
+   PINECONE_API_KEY="your-pinecone-api-key"
+   PINECONE_ENVIRONMENT="your-pinecone-environment"
+   PINECONE_INDEX="your-pinecone-index-name"
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+   # JWT for Extension Auth
+   JWT_SECRET="your-jwt-secret-here"
+   ```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+4. Set up the database:
+   ```
+   npx prisma generate
+   npx prisma migrate dev --name init
+   ```
+
+5. Run the development server:
+   ```
+   npm run dev
+   ```
+
+6. Load the extension in Chrome:
+   - Go to `chrome://extensions/`
+   - Enable "Developer mode"
+   - Click "Load unpacked"
+   - Select the `extension` folder from this project
+
+## Project Structure
+
+- `app/` - Next.js application code
+  - `api/` - API routes
+  - `components/` - React components
+  - `lib/` - Utility functions and libraries
+- `prisma/` - Database schema and migrations
+- `extension/` - Chrome extension code
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- [Next.js](https://nextjs.org/)
+- [Prisma](https://www.prisma.io/)
+- [Google AI](https://ai.google/)
+- [Pinecone](https://www.pinecone.io/)
+- [TailwindCSS](https://tailwindcss.com/)
