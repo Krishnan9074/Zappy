@@ -15,21 +15,22 @@ datasource db {
 
 // Core authentication and account information
 model User {
-  id                String             @id @default(cuid())
+  id                String    @id @default(cuid())
   name              String?
-  email             String             @unique
+  email             String?   @unique
   emailVerified     DateTime?
-  password          String?
   image             String?
-  onboardingCompleted Boolean          @default(false)
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  password          String?
+  onboardingCompleted Boolean @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  customFields      Json?     @default("{}")
   accounts          Account[]
   sessions          Session[]
-  profile           UserProfile?
+  profile           Profile?
+  documents         Document[]
   userData          UserData[]
-  documents         UserDocument[]
-  aiPersona         AiPersona[]
+  aiPersona         AiPersona?
   extensionTokens   ExtensionToken[]
   formSubmissions   FormSubmission[]
   auditLogs         AuditLog[]
@@ -148,19 +149,16 @@ model UserDocument {
 
 // Trained AI model data and status tracking
 model AiPersona {
-  id             String        @id @default(cuid())
-  userId         String
-  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  version        Int           @default(1)
-  status         PersonaStatus @default(PENDING)
-  metadata       Json?
-  trainingData   Json?
-  
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  
-  @@unique([userId, version])
+  id            String        @id @default(cuid())
+  userId        String        @unique
+  status        PersonaStatus @default(PENDING)
+  metadata      Json?
+  error         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("ai_personas")
 }
 
 // Secure browser extension authentication

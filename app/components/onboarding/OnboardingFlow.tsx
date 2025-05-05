@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import PersonalInfoStep from './steps/PersonalInfoStep';
 import DocumentUploadStep from './steps/DocumentUploadStep';
 import AiPersonaStep from './steps/AiPersonaStep';
+import CustomFieldsStep from './steps/CustomFieldsStep';
 import CompletionStep from './steps/CompletionStep';
 
 export type OnboardingData = {
@@ -20,6 +21,7 @@ export type OnboardingData = {
     postalCode: string;
     country: string;
   };
+  customFields: Record<string, string>;
   documents: File[];
   aiPersonaEnabled: boolean;
 };
@@ -37,6 +39,7 @@ const INITIAL_DATA: OnboardingData = {
     postalCode: '',
     country: '',
   },
+  customFields: {},
   documents: [],
   aiPersonaEnabled: true,
 };
@@ -46,13 +49,6 @@ export default function OnboardingFlow() {
   const [data, setData] = useState<OnboardingData>(INITIAL_DATA);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const router = useRouter();
-
-  const steps = [
-    { title: 'Personal Information', component: PersonalInfoStep },
-    { title: 'Document Upload', component: DocumentUploadStep },
-    { title: 'AI Persona Setup', component: AiPersonaStep },
-    { title: 'Completion', component: CompletionStep },
-  ];
 
   const updateFields = (fields: Partial<OnboardingData>) => {
     setData(prev => ({ ...prev, ...fields }));
@@ -116,13 +112,23 @@ export default function OnboardingFlow() {
       }
 
       // Mark onboarding as completed
-      await fetch('/api/user/onboarding', {
+      const onboardingResponse = await fetch('/api/user/onboarding', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ completed: true }),
+        body: JSON.stringify({
+          personalInfo: data.personalInfo,
+          documents: data.documents,
+          aiPersonaEnabled: data.aiPersonaEnabled,
+          customFields: data.customFields
+        }),
       });
+
+      if (!onboardingResponse.ok) {
+        const errorData = await onboardingResponse.json();
+        throw new Error(errorData.error || 'Failed to complete onboarding');
+      }
 
       // Go to completion step
       setCurrentStep(steps.length - 1);
@@ -134,57 +140,81 @@ export default function OnboardingFlow() {
     }
   };
 
-  const CurrentStepComponent = steps[currentStep].component;
+  const steps = [
+    {
+      title: 'Personal Information',
+      component: (
+        <PersonalInfoStep
+          data={data}
+          updateFields={updateFields}
+          goToNextStep={goToNextStep}
+          goToPreviousStep={goToPreviousStep}
+          isFirstStep={true}
+          isLastStep={false}
+          submitForm={submitOnboarding}
+          isSubmitting={isSubmitting}
+        />
+      ),
+    },
+    {
+      title: 'Custom Fields',
+      component: (
+        <CustomFieldsStep
+          data={data}
+          updateFields={updateFields}
+          goToNextStep={goToNextStep}
+          goToPreviousStep={goToPreviousStep}
+          isFirstStep={false}
+          isLastStep={false}
+          submitForm={submitOnboarding}
+          isSubmitting={isSubmitting}
+        />
+      ),
+    },
+    {
+      title: 'Document Upload',
+      component: (
+        <DocumentUploadStep
+          data={data}
+          updateFields={updateFields}
+          goToNextStep={goToNextStep}
+          goToPreviousStep={goToPreviousStep}
+          isFirstStep={false}
+          isLastStep={false}
+          submitForm={submitOnboarding}
+          isSubmitting={isSubmitting}
+        />
+      ),
+    },
+    {
+      title: 'AI Persona',
+      component: (
+        <AiPersonaStep
+          data={data}
+          updateFields={updateFields}
+          goToNextStep={goToNextStep}
+          goToPreviousStep={goToPreviousStep}
+          isFirstStep={false}
+          isLastStep={true}
+          submitForm={submitOnboarding}
+          isSubmitting={isSubmitting}
+        />
+      ),
+    },
+  ];
 
   return (
-    <div className="flex flex-col min-h-full">
-      {/* Progress bar */}
-      <div className="px-4 py-4 sm:px-6 lg:px-8 bg-white shadow">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-medium text-gray-900">Complete Your Profile</h2>
-            <p className="text-sm text-grey-900">
-              Step {currentStep + 1} of {steps.length}
-            </p>
-          </div>
-          <div className="mt-4 relative">
-            <div className="h-2 bg-gray-200 rounded-full">
-              <div
-                className="h-2 bg-blue-600 rounded-full transition-all duration-300"
-                style={{ width: `${((currentStep + 1) / steps.length) * 100}%` }}
-              ></div>
-            </div>
-            <div className="flex justify-between mt-1">
-              {steps.map((step, index) => (
-                <div key={index} className="relative flex flex-col items-center">
-                  <div 
-                    className={`w-4 h-4 rounded-full ${
-                      index <= currentStep ? 'bg-blue-600' : 'bg-gray-300'
-                    }`}
-                  ></div>
-                  <span className="text-xs mt-1 hidden sm:block">{step.title}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+    <div className="min-h-screen bg-gray-50 py-12">
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="mb-8">
+          <h2 className="text-2xl font-bold text-gray-900">Complete Your Profile</h2>
+          <p className="mt-2 text-sm text-gray-600">
+            Step {currentStep + 1} of {steps.length}: {steps[currentStep].title}
+          </p>
         </div>
-      </div>
 
-      {/* Step content */}
-      <div className="flex-grow px-4 py-6 sm:px-6 lg:px-8 bg-gray-50">
-        <div className="max-w-3xl mx-auto bg-white rounded-lg shadow overflow-hidden">
-          <div className="px-4 py-5 sm:p-6">
-            <CurrentStepComponent
-              data={data}
-              updateFields={updateFields}
-              goToNextStep={goToNextStep}
-              goToPreviousStep={goToPreviousStep}
-              isLastStep={currentStep === steps.length - 2}
-              isFirstStep={currentStep === 0}
-              submitForm={submitOnboarding}
-              isSubmitting={isSubmitting}
-            />
-          </div>
+        <div className="bg-white shadow sm:rounded-lg">
+          {steps[currentStep].component}
         </div>
       </div>
     </div>

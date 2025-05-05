@@ -1,7 +1,41 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
-import { prisma } from '@/app/lib/prisma';
+import { PrismaClient, Prisma, PersonaStatus, User, Profile, UserData, Document } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+type UserWithRelations = {
+  id: string;
+  name: string | null;
+  email: string;
+  profile: {
+    firstName: string | null;
+    lastName: string | null;
+    phoneNumber: string | null;
+    dateOfBirth: string | null;
+    gender: string | null;
+    occupation: string | null;
+    addressLine1: string | null;
+    addressLine2: string | null;
+    city: string | null;
+    state: string | null;
+    postalCode: string | null;
+    country: string | null;
+  } | null;
+  userData: Array<{
+    key: string;
+    value: string;
+    category: string;
+  }>;
+  documents: Array<{
+    id: string;
+    originalName: string;
+    mimeType: string;
+    extractedData: any;
+  }>;
+  customFields: Record<string, string>;
+};
 
 export async function GET() {
   try {
@@ -27,59 +61,75 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
-    
-    if (!session?.user?.id) {
+    if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
-    const { createPersona } = await request.json();
-    
-    if (!createPersona) {
-      return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
-    }
-    
-    // Check if user has existing personas
+
+    // Check for existing persona
     const existingPersona = await prisma.aiPersona.findFirst({
-      where: { userId: session.user.id },
-      orderBy: { version: 'desc' },
+      where: {
+        user: {
+          email: session.user.email
+        }
+      }
     });
-    
-    // Create a new AI persona with PROCESSING status
-    const persona = await prisma.aiPersona.create({
-      data: {
-        userId: session.user.id,
-        version: existingPersona ? existingPersona.version + 1 : 1,
-        status: 'PROCESSING',
-        metadata: { 
-          createdAt: new Date().toISOString(),
-          source: 'onboarding' 
+
+    let persona;
+    if (existingPersona) {
+      // Update existing persona
+      persona = await prisma.aiPersona.update({
+        where: { id: existingPersona.id },
+        data: {
+          status: 'PROCESSING',
+          metadata: {}
+        }
+      });
+    } else {
+      // Create new persona
+      persona = await prisma.aiPersona.create({
+        data: {
+          user: {
+            connect: {
+              email: session.user.email,
+            },
+          },
+          status: 'PROCESSING',
         },
-      },
-    });
-    
-    // Start an asynchronous process to build the AI persona
-    // using a self-executing async function to not block the response
+      });
+    }
+
+    // Start training process
     (async () => {
       try {
-        // 1. Gather user data for AI training
-        const userData = await prisma.user.findUnique({
-          where: { id: session.user.id },
+        // 1. Get user data
+        const userDataRaw = await prisma.user.findUnique({
+          where: { email: session.user.email },
           include: {
             profile: true,
-            documents: {
-              where: { processingStatus: 'COMPLETED' },
-            },
             userData: true,
+            documents: true,
           },
         });
-        
-        if (!userData) {
-          throw new Error('User data not found');
+
+        if (!userDataRaw || !userDataRaw.email) {
+          return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
-        
+
+        const userData: UserWithRelations = {
+          id: userDataRaw.id,
+          name: userDataRaw.name,
+          email: userDataRaw.email,
+          profile: userDataRaw.profile,
+          userData: userDataRaw.userData || [],
+          documents: userDataRaw.documents || [],
+          customFields: typeof userDataRaw.customFields === 'string' 
+            ? JSON.parse(userDataRaw.customFields) 
+            : (userDataRaw.customFields || {}),
+        };
+
         // 2. Extract and structure training data
         const trainableData = {
           personalInfo: {
@@ -107,6 +157,7 @@ export async function POST(request: Request) {
             };
             return acc;
           }, {} as Record<string, { value: string, category: string }>),
+          customFields: userData.customFields || {},
           documentData: userData.documents.map((doc: { id: string, originalName: string, mimeType: string, extractedData: any }) => ({
             id: doc.id,
             name: doc.originalName,
@@ -114,77 +165,71 @@ export async function POST(request: Request) {
             extractedData: doc.extractedData,
           })),
         };
-        
-        // 3. Process training data (this would involve potentially complex ML operations)
+
+        // 3. Generate system prompt
+        const systemPrompt = `You are an AI assistant that helps fill out forms on behalf of ${userData.name}. 
+You have access to the following information about them:
+
+Personal Information:
+- Name: ${userData.name}
+- Email: ${userData.email}
+- First Name: ${userData.profile?.firstName}
+- Last Name: ${userData.profile?.lastName}
+- Phone: ${userData.profile?.phoneNumber}
+- Date of Birth: ${userData.profile?.dateOfBirth}
+- Occupation: ${userData.profile?.occupation}
+- Address: ${userData.profile?.addressLine1}, ${userData.profile?.city}, ${userData.profile?.state}, ${userData.profile?.postalCode}, ${userData.profile?.country}
+
+Custom Fields:
+${Object.entries(userData.customFields || {}).map(([key, value]) => `- ${key}: ${value}`).join('\n')}
+
+Form Field History:
+${Object.entries(trainableData.formFields).map(([key, data]) => `- ${key}: ${data.value} (Category: ${data.category})`).join('\n')}
+
+Document Information:
+${trainableData.documentData.map(doc => `- ${doc.name} (${doc.type})`).join('\n')}
+
+Use this information to help fill out forms accurately and efficiently. When filling out forms:
+1. Use the most appropriate information available
+2. If exact information isn't available, use the closest match or ask for clarification
+3. Keep track of which fields are filled with verified information vs. best guesses
+4. Always maintain privacy and security by not sharing sensitive information unnecessarily`;
+
+        // 4. Process training data (this would involve potentially complex ML operations)
         // In a production app, this would likely call an external ML service or queue
-        
-        // Create embeddings and process mappings between form fields and user data
-        const fieldMappings = await generateFieldMappings(trainableData);
-        
-        // Create AI response templates based on user data
-        const responseTemplates = await generateResponseTemplates(trainableData);
-        
-        // Create heuristics for field recognition
         const fieldHeuristics = await generateFieldHeuristics(trainableData);
-        
-        // 4. Save the processed training data back to the persona
+
+        // 5. Save the processed training data back to the persona
         await prisma.aiPersona.update({
           where: { id: persona.id },
-          data: { 
+          data: {
             status: 'TRAINED',
-            trainingData: {
-              fieldMappings,
-              responseTemplates,
-              fieldHeuristics,
-              lastUpdated: new Date().toISOString(),
-              version: persona.version,
-            },
             metadata: {
-              ...persona.metadata,
-              completedAt: new Date().toISOString(),
-              dataPoints: Object.keys(trainableData.formFields).length + trainableData.documentData.length,
-              confidence: calculateConfidenceScore(trainableData),
-            }
+              systemPrompt,
+              fieldHeuristics,
+            },
           },
         });
-        
-        // 5. Log the successful training
+
+        // 6. Log the successful training
         await prisma.auditLog.create({
           data: {
-            userId: session.user.id,
-            action: 'PERSONA_TRAINED',
+            action: 'AI_PERSONA_TRAINING_COMPLETED',
+            userId: userData.id,
             resource: 'AI_PERSONA',
             resourceId: persona.id,
             metadata: {
-              version: persona.version,
-              dataPoints: Object.keys(trainableData.formFields).length + trainableData.documentData.length,
+              personaId: persona.id,
+              status: 'success',
             },
           },
         });
-        
       } catch (error) {
-        console.error('Error training AI persona:', error);
-        
-        // Update the persona status to FAILED
+        console.error('Error in AI persona training:', error);
         await prisma.aiPersona.update({
           where: { id: persona.id },
-          data: { 
-            status: 'FAILED',
-            metadata: {
-              ...persona.metadata,
-              error: error instanceof Error ? error.message : 'Unknown error',
-              failedAt: new Date().toISOString(),
-            }
-          },
-        });
-        
-        // Log the failure
-        await prisma.auditLog.create({
           data: {
-            userId: session.user.id,
-            action: 'PERSONA_TRAINING_FAILED',
-            resource: 'AI_PERSONA',
-            resourceId: persona.id,
+            status: 'FAILED',
             metadata: {
               error: error instanceof Error ? error.message : 'Unknown error',
             },
@@ -192,11 +237,14 @@ export async function POST(request: Request) {
         });
       }
     })();
-    
-    return NextResponse.json(persona);
+
+    return NextResponse.json({ success: true, personaId: persona.id });
   } catch (error) {
     console.error('Error creating AI persona:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Failed to create AI persona' },
+      { status: 500 }
+    );
   }
 }
 

@@ -241,6 +241,8 @@ function requestFormValues(formIndex: number, sendResponse: (response: any) => v
   const url = window.location.href;
   const domain = window.location.hostname;
   
+  console.log('ZappForm: Requesting form values for fields', formFields);
+  
   chrome.runtime.sendMessage({
     type: 'FILL_FORM',
     data: {
@@ -250,6 +252,7 @@ function requestFormValues(formIndex: number, sendResponse: (response: any) => v
     }
   }, (response) => {
     if (response && response.success) {
+      console.log('ZappForm: Received form values from API', response.data);
       formValues = response.data;
       fillForm(formIndex);
       sendResponse({ success: true });
@@ -281,8 +284,28 @@ function fillForm(formIndex: number) {
       return;
     }
     
-    // Try to find matching value by name or id
+    let fieldInfo = formFields.find(f => f.name === name || f.id === id);
+    let fieldLabel = fieldInfo?.label?.toLowerCase() || '';
+    
+    // Try to find matching value by name, id, or label
     let value = formValues[name] || formValues[id] || '';
+    
+    // If no direct match, try using the label
+    if (!value && fieldLabel) {
+      value = formValues[fieldLabel] || '';
+    }
+    
+    // If still no match, try with variations of the field name/id/label
+    if (!value) {
+      // Try with underscores instead of spaces
+      const nameWithUnderscores = name.replace(/\s+/g, '_').toLowerCase();
+      const idWithUnderscores = id.replace(/\s+/g, '_').toLowerCase();
+      const labelWithUnderscores = fieldLabel.replace(/\s+/g, '_').toLowerCase();
+      
+      value = formValues[nameWithUnderscores] || formValues[idWithUnderscores] || formValues[labelWithUnderscores] || '';
+    }
+    
+    console.log(`ZappForm: Field ${name || id}, type ${type}, value ${value}`);
     
     // Set value based on input type
     switch (type) {

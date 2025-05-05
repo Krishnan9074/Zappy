@@ -70,6 +70,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'MANUAL_FILL':
       handleManualFill(sender.tab.id);
       break;
+      
+    case 'FILL_FORM':
+      const { url, domain, fields } = message.data;
+      
+      // Fetch suggestions from our API
+      fetch(`${apiBaseUrl}/extension/forms/suggest`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include', // Important for session cookies
+        body: JSON.stringify({ url, domain, fields }),
+      })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        console.log('Form suggestions received:', data);
+        if (data.success && data.values) {
+          sendResponse({ success: true, data: data.values });
+        } else {
+          sendResponse({ success: false, error: data.error || 'Failed to get form values' });
+        }
+      })
+      .catch(error => {
+        console.error('Error getting form suggestions:', error);
+        sendResponse({ success: false, error: error.message });
+      });
+      
+      return true; // Important: keeps the message channel open for async response
   }
   
   // Return true to indicate asynchronous response

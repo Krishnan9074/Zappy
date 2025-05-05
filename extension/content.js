@@ -207,72 +207,219 @@ function removeAutoFillButton() {
   autoFillButton = null;
 }
 
-// Scan the page for forms
+// Scan the page for forms and input fields
 function scanForForms() {
-  console.log('Scanning for forms on page...');
+  console.log('Scanning for forms and input fields on page...');
   
   // Reset the form fields array
   formFieldsOnPage = [];
   
-  // Special handling for Google Forms
-  if (window.location.href.includes('docs.google.com/forms')) {
-    console.log('Google Form detected');
-    scanGoogleForm();
-    
-    // If we found form fields, notify the background script
-    if (formFieldsOnPage.length > 0) {
-      console.log(`Found ${formFieldsOnPage[0].fields.length} fields in Google Form`);
-      
-      chrome.runtime.sendMessage({
-        type: 'FORMS_DETECTED',
-        data: {
-          url: window.location.href,
-          domain: new URL(window.location.href).hostname,
-          forms: formFieldsOnPage
-        }
-      });
-      
-      // Create a button for manual filling
-      createAutoFillButton();
-      return true;
-    }
-    return false;
-  }
-  
-  // Process regular forms
+  // First, look for traditional forms
   const forms = document.querySelectorAll('form');
-  console.log(`Found ${forms.length} form elements on page`);
+  forms.forEach((form, index) => {
+    const fields = [];
+    const inputs = form.querySelectorAll('input, select, textarea');
+    
+    inputs.forEach(input => {
+      const fieldInfo = extractFieldInfo(input);
+      if (fieldInfo) {
+        fields.push(fieldInfo);
+      }
+    });
+    
+    if (fields.length > 0) {
+      formFieldsOnPage.push({
+        formIndex: index,
+        formId: form.id || `form-${index}`,
+        fields: fields
+      });
+    }
+  });
   
-  if (forms.length === 0) {
-    console.log('No form elements detected, scanning for inputs');
-    // If no forms, look for inputs not in a form
-    scanForFormlessInputs();
-  } else {
-    // Process each form
-    forms.forEach((form, formIndex) => {
-      scanForm(form, formIndex);
+  // Then, look for input fields that might not be in a form
+  const standaloneInputs = document.querySelectorAll('input, select, textarea');
+  const standaloneFields = [];
+  
+  standaloneInputs.forEach(input => {
+    // Skip if this input is already part of a detected form
+    if (!isInputInDetectedForm(input)) {
+      const fieldInfo = extractFieldInfo(input);
+      if (fieldInfo) {
+        standaloneFields.push(fieldInfo);
+      }
+    }
+  });
+  
+  // If we found standalone fields, add them as an implied form
+  if (standaloneFields.length > 0) {
+    formFieldsOnPage.push({
+      formIndex: formFieldsOnPage.length,
+      formId: 'implied-form',
+      fields: standaloneFields
     });
   }
   
-  // If we found form fields, notify the background script
+  // Special handling for Google Forms
+  if (currentDomain.includes('docs.google.com') && currentUrl.includes('forms')) {
+    scanGoogleForm();
+  }
+  
+  console.log(`Found ${formFieldsOnPage.length} forms with fields:`, formFieldsOnPage);
+  
+  // If we found any forms or fields, notify background script and show button
   if (formFieldsOnPage.length > 0) {
-    console.log(`Found ${formFieldsOnPage.length} forms with fields`);
-    
     chrome.runtime.sendMessage({
       type: 'FORMS_DETECTED',
       data: {
-        url: window.location.href,
-        domain: new URL(window.location.href).hostname,
+        url: currentUrl,
+        domain: currentDomain,
         forms: formFieldsOnPage
       }
     });
     
-    // Create a button for manual filling
     createAutoFillButton();
     return true;
   }
   
   return false;
+}
+
+// Helper function to check if an input is already part of a detected form
+function isInputInDetectedForm(input) {
+  for (const form of formFieldsOnPage) {
+    for (const field of form.fields) {
+      if (field.element === input) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Extract field information from an input element
+function extractFieldInfo(input) {
+  // Skip hidden, submit, button, and password fields
+  if (
+    input.type === 'hidden' ||
+    input.type === 'submit' ||
+    input.type === 'button' ||
+    input.type === 'password' ||
+    input.type === 'reset' ||
+    input.style.display === 'none' ||
+    input.style.visibility === 'hidden' ||
+    input.getAttribute('aria-hidden') === 'true'
+  ) {
+    return null;
+  }
+  
+  // Get the field's label
+  let label = findInputLabel(input);
+  
+  // Get field type and validation info
+  const fieldInfo = {
+    element: input,
+    name: input.name || '',
+    id: input.id || '',
+    type: input.type || input.tagName.toLowerCase(),
+    label: label,
+    required: input.required || false,
+    accept: input.accept || undefined,
+    validation: {
+      pattern: input.pattern || undefined,
+      min: input.min || undefined,
+      max: input.max || undefined,
+      minLength: input.minLength || undefined,
+      maxLength: input.maxLength || undefined
+    }
+  };
+  
+  // For select elements, add options
+  if (input.tagName === 'SELECT') {
+    fieldInfo.options = Array.from(input.options).map(option => ({
+      value: option.value,
+      label: option.text,
+      selected: option.selected
+    }));
+  }
+  
+  // For radio/checkbox groups, add options
+  if (input.type === 'radio' || input.type === 'checkbox') {
+    const name = input.name;
+    if (name) {
+      const group = document.querySelectorAll(`input[name="${name}"]`);
+      fieldInfo.options = Array.from(group).map(opt => ({
+        value: opt.value,
+        label: findInputLabel(opt),
+        checked: opt.checked,
+        element: opt
+      }));
+    }
+  }
+  
+  return fieldInfo;
+}
+
+// Helper function to find label for an input
+function findInputLabel(input) {
+  let label = '';
+  
+  // Check for label with 'for' attribute
+  if (input.id) {
+    const labelElement = document.querySelector(`label[for="${input.id}"]`);
+    if (labelElement) {
+      label = labelElement.textContent.trim();
+    }
+  }
+  
+  // Check for parent label
+  if (!label && input.parentElement) {
+    if (input.parentElement.tagName === 'LABEL') {
+      label = input.parentElement.textContent.trim();
+      // Remove the input's value from the label if it's there
+      if (input.value) {
+        label = label.replace(input.value, '').trim();
+      }
+    }
+  }
+  
+  // Check for aria-label
+  if (!label) {
+    label = input.getAttribute('aria-label') || '';
+  }
+  
+  // Check for placeholder
+  if (!label) {
+    label = input.placeholder || '';
+  }
+  
+  // Check for nearby text that might be a label
+  if (!label) {
+    const parent = input.parentElement;
+    if (parent) {
+      // Check previous siblings
+      let sibling = input.previousElementSibling;
+      while (sibling && !label) {
+        if (sibling.tagName !== 'INPUT' && sibling.tagName !== 'SELECT' && sibling.tagName !== 'TEXTAREA') {
+          label = sibling.textContent.trim();
+        }
+        sibling = sibling.previousElementSibling;
+      }
+      
+      // Check for text nodes
+      if (!label) {
+        const textNodes = Array.from(parent.childNodes)
+          .filter(node => node.nodeType === Node.TEXT_NODE)
+          .map(node => node.textContent.trim())
+          .filter(text => text);
+        
+        if (textNodes.length > 0) {
+          label = textNodes[0];
+        }
+      }
+    }
+  }
+  
+  return label;
 }
 
 // Improved Google Form detection
@@ -451,159 +598,6 @@ function scanGoogleForm() {
     type: 'google-form',
     fields: formFields
   });
-}
-
-// Extract field information from an input element
-function extractFieldInfo(input) {
-  // Skip hidden, submit, button, and password fields
-  if (
-    input.type === 'hidden' ||
-    input.type === 'submit' ||
-    input.type === 'button' ||
-    input.type === 'password' ||
-    input.type === 'file' ||
-    input.type === 'image' ||
-    input.type === 'reset' ||
-    input.style.display === 'none' ||
-    input.style.visibility === 'hidden' ||
-    input.getAttribute('aria-hidden') === 'true'
-  ) {
-    return null;
-  }
-  
-  // Get the field's label
-  let label = '';
-  
-  // Check for label element
-  if (input.id) {
-    const labelElement = document.querySelector(`label[for="${input.id}"]`);
-    if (labelElement) {
-      label = labelElement.textContent.trim();
-    }
-  }
-  
-  // If no label found, check for nearby text
-  if (!label) {
-    const parent = input.parentElement;
-    if (parent) {
-      // Get text nodes directly inside the parent
-      for (let i = 0; i < parent.childNodes.length; i++) {
-        const node = parent.childNodes[i];
-        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
-          label = node.textContent.trim();
-          break;
-        }
-      }
-      
-      // If still no label, check for previous siblings
-      if (!label) {
-        const prevSibling = input.previousElementSibling;
-        if (prevSibling && prevSibling.tagName !== 'INPUT' && prevSibling.tagName !== 'SELECT' && prevSibling.tagName !== 'TEXTAREA') {
-          label = prevSibling.textContent.trim();
-        }
-      }
-    }
-  }
-  
-  // If there's still no label, use placeholder or name as fallback
-  if (!label) {
-    label = input.placeholder || input.name || '';
-  }
-  
-  return {
-    name: input.name || '',
-    id: input.id || '',
-    type: input.type || input.tagName.toLowerCase(),
-    label: label,
-    required: input.required || false,
-    element: input
-  };
-}
-
-// Look for inputs that might be part of an implied form
-function scanForInputClusters() {
-  const inputs = document.querySelectorAll('input, select, textarea');
-  
-  if (inputs.length === 0) return;
-  
-  // Group inputs by their closest container
-  const containerMap = new Map();
-  
-  inputs.forEach(input => {
-    // Skip hidden and submit inputs
-    if (
-      input.type === 'hidden' ||
-      input.type === 'submit' ||
-      input.type === 'button' ||
-      input.type === 'password'
-    ) {
-      return;
-    }
-    
-    // Find the closest div that might be a form container
-    let container = input.parentElement;
-    let depth = 0;
-    const maxDepth = 3; // Don't go too far up the DOM
-    
-    while (container && depth < maxDepth) {
-      // If this container already has other inputs, it's likely a form
-      if (container.querySelectorAll('input, select, textarea').length > 1) {
-        break;
-      }
-      
-      container = container.parentElement;
-      depth++;
-    }
-    
-    if (container) {
-      if (!containerMap.has(container)) {
-        containerMap.set(container, []);
-      }
-      
-      containerMap.get(container).push(input);
-    }
-  });
-  
-  // Process each container that has multiple inputs
-  let formIndex = 0;
-  containerMap.forEach((inputs, container) => {
-    if (inputs.length > 1) {
-      const formFields = [];
-      
-      inputs.forEach(input => {
-        const field = extractFieldInfo(input);
-        if (field) {
-          formFields.push(field);
-        }
-      });
-      
-      if (formFields.length > 0) {
-        formFieldsOnPage.push({
-          formIndex,
-          formId: `implied-form-${formIndex}`,
-          fields: formFields
-        });
-        
-        formIndex++;
-      }
-    }
-  });
-  
-  // Send form data to background script
-  if (formFieldsOnPage.length > 0) {
-    canAutoFill = true;
-    chrome.runtime.sendMessage({
-      type: 'FORMS_DETECTED',
-      data: {
-        url: currentUrl,
-        domain: currentDomain,
-        forms: formFieldsOnPage
-      }
-    });
-    
-    // Create or update the auto-fill button
-    createAutoFillButton();
-  }
 }
 
 // Fill a form with provided data
@@ -913,56 +907,6 @@ function fillCheckboxField(field, value) {
       }
     }
   }
-}
-
-// Helper to find label for an input
-function findInputLabel(input) {
-  // First check for label with 'for' attribute
-  const id = input.id;
-  if (id) {
-    const label = document.querySelector(`label[for="${id}"]`);
-    if (label) return label.textContent.trim();
-  }
-  
-  // Check for parent label
-  let parent = input.parentElement;
-  while (parent) {
-    if (parent.tagName === 'LABEL') {
-      return parent.textContent.trim();
-    }
-    
-    // Check for label as sibling
-    const siblings = parent.childNodes;
-    for (let i = 0; i < siblings.length; i++) {
-      const sibling = siblings[i];
-      if (sibling.nodeType === 1 && sibling.tagName === 'LABEL') {
-        return sibling.textContent.trim();
-      }
-    }
-    
-    // Look for any text node that might be a label
-    for (let i = 0; i < siblings.length; i++) {
-      const sibling = siblings[i];
-      if (sibling.nodeType === 3 && sibling.textContent.trim()) {
-        return sibling.textContent.trim();
-      }
-    }
-    
-    parent = parent.parentElement;
-  }
-  
-  // If all else fails, look for nearby elements that might be labels
-  const possibleLabels = ['span', 'div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
-  for (const tag of possibleLabels) {
-    const elements = input.parentElement.querySelectorAll(tag);
-    for (const el of elements) {
-      if (el.textContent.trim()) {
-        return el.textContent.trim();
-      }
-    }
-  }
-  
-  return '';
 }
 
 // Helper to find label for a group of inputs

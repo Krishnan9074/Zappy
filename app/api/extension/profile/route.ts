@@ -20,7 +20,7 @@ export async function GET() {
     }
     
     // Get user profile data
-    const user = await prisma.user.findUnique({
+    const user: any = await prisma.user.findUnique({
       where: { id: session.user.id },
       include: {
         profile: true,
@@ -68,11 +68,17 @@ export async function GET() {
       });
     }
     
+    // Include user's custom fields from the User model
+    const userCustomFields = typeof user.customFields === 'string'
+      ? JSON.parse(user.customFields)
+      : user.customFields || {};
+    
     return NextResponse.json({
       success: true,
       profile: {
         ...profileData,
-        ...customData
+        ...customData,
+        ...userCustomFields
       }
     });
   } catch (error) {
